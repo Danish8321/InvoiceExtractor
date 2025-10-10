@@ -24,4 +24,7 @@ public class InvoiceData
 
     // Product Line Items
     public List<ProductDetail> Products { get; set; } = new List<ProductDetail>();
+
+    public decimal TotalTax { get; set; }
+    public decimal GrandTotal { get; set; }
 }

@@ -27,7 +27,7 @@ public class MeeshoInvoiceExtractor
             // Extract Product Line Items from Description table
             ExtractProductLineItems(invoiceText, invoiceData);
 
-            //Console.WriteLine("Extraction completed!\n");
+            ExtractInvoiceTotals(invoiceText, invoiceData);
         }
         catch (Exception ex)
         {
@@ -155,8 +155,10 @@ public class MeeshoInvoiceExtractor
 
     private static void ExtractProductLineItems(string text, InvoiceData data)
     {
-        //Console.WriteLine("\nExtracting product line items...");
+        Console.WriteLine("\nExtracting product line items...");
 
+        // Pattern: Description...Total then product lines until "Total"
+        // Find section between table header and final Total
         var tableSectionMatch = Regex.Match(text, @"DescriptionHSNQtyGross AmountDiscountTaxable ValueTaxesTotal(.+?)Total", RegexOptions.Singleline);
 
         if (!tableSectionMatch.Success)
@@ -167,11 +169,10 @@ public class MeeshoInvoiceExtractor
 
         string tableContent = tableSectionMatch.Groups[1].Value;
 
-        // Pattern for each product line:
-        // Product Name HSN Qty Rs.Amount Rs.Amount Rs.Amount TAX @%  Rs.Amount Rs.Amount
-        // Example: Kanaka Mayuri Jhumka - Free Size 7117901Rs.570.00Rs.0.00Rs.553.40IGST @3.0% Rs.16.60Rs.570.00
-
+        // Pattern for each product line - handles both IGST and CGST+SGST
+        // Product Name HSN Qty Rs.Gross Rs.Discount Rs.Taxable TAX Rs.Tax Rs.Total
         var productPattern = @"([^0-9]+?)(\d{6})(\d+|NA)Rs\.([\d.]+)Rs\.([\d.]+)Rs\.([\d.]+)((?:(?:IGST|CGST|SGST)\s*@[\d.]+%\s*:?\s*Rs\.[\d.]+\s*)+)Rs\.([\d.]+)";
+
         var matches = Regex.Matches(tableContent, productPattern);
 
         Console.WriteLine($"Found {matches.Count} product line items");
@@ -180,21 +181,71 @@ public class MeeshoInvoiceExtractor
         {
             if (match.Success)
             {
+                string productName = match.Groups[1].Value.Trim();
+                string hsn = match.Groups[2].Value;
+                string qtyStr = match.Groups[3].Value;
+                string gross = match.Groups[4].Value;
+                string discount = match.Groups[5].Value;
+                string taxable = match.Groups[6].Value;
+                string taxSection = match.Groups[7].Value; // Contains all tax info
+                string total = match.Groups[8].Value;
+
+                // Parse tax section to extract tax type and amount
+                string taxType = "";
+                decimal taxAmount = 0;
+
+                // Extract all tax components
+                var taxMatches = Regex.Matches(taxSection, @"(IGST|CGST|SGST)\s*@([\d.]+)%\s*:?\s*Rs\.([\d.]+)");
+
+                var taxComponents = new List<string>();
+                foreach (Match taxMatch in taxMatches)
+                {
+                    string taxName = taxMatch.Groups[1].Value;
+                    string taxRate = taxMatch.Groups[2].Value;
+                    decimal taxVal = decimal.Parse(taxMatch.Groups[3].Value);
+
+                    taxComponents.Add($"{taxName} @{taxRate}%");
+                    taxAmount += taxVal;
+                }
+
+                taxType = string.Join(" + ", taxComponents);
+
                 var product = new ProductDetail
                 {
-                    Description = match.Groups[1].Value.Trim(),
-                    HSN = match.Groups[2].Value,
-                    Qty = match.Groups[3].Value,
-                    GrossAmount = match.Groups[4].Value,
-                    Discount = match.Groups[5].Value,
-                    TaxableValue = match.Groups[6].Value,
-                    Taxes = match.Groups[7].Value,
-                    Total = match.Groups[8].Value
+                    Description = productName,
+                    HSN = hsn,
+                    Qty = qtyStr,
+                    GrossAmount = gross,
+                    Discount = discount,
+                    TaxableValue = taxable,
+                    //TaxType = taxType,
+                    Taxes = taxSection,
+                    Total = total
                 };
 
                 data.Products.Add(product);
-                //Console.WriteLine($"  ✓ Product: {product.Product}");
             }
+        }
+    }
+
+    private static void ExtractInvoiceTotals(string text, InvoiceData data)
+    {
+        Console.WriteLine("\nExtracting invoice totals...");
+
+        // Pattern: TotalRs.17.85Rs.613.00
+        // The first Rs. amount is total tax, second is grand total
+        var totalMatch = Regex.Match(text, @"TotalRs\.([\d.]+)Rs\.([\d.]+)");
+
+        if (totalMatch.Success)
+        {
+            data.TotalTax = decimal.Parse(totalMatch.Groups[1].Value);
+            data.GrandTotal = decimal.Parse(totalMatch.Groups[2].Value);
+            //Console.WriteLine($"✓ Total Tax: Rs.{data.TotalTax}");
+            //Console.WriteLine($"✓ Grand Total: Rs.{data.GrandTotal}");
+        }
+        else
+        {
+            Console.WriteLine("Could not extract invoice totals");
         }
     }
 
@@ -237,6 +288,12 @@ public class MeeshoInvoiceExtractor
             Console.WriteLine("─────────────────────────────────────────────────────────────────────────");
             productNum++;
         }
+
+        Console.WriteLine("╔════════════════════════════════════════════════════════════════════════╗");
+        Console.WriteLine("║                         INVOICE TOTALS                                 ║");
+        Console.WriteLine("╚════════════════════════════════════════════════════════════════════════╝");
+        Console.WriteLine($"{"Total Tax:",-25} Rs.{data.TotalTax:N2}");
+        Console.WriteLine($"{"Grand Total:",-25} Rs.{data.GrandTotal:N2}");
     }
 
     //public static string ToJson(InvoiceData data)
