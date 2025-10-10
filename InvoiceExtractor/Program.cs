@@ -1,7 +1,8 @@
-﻿using UglyToad.PdfPig;
+﻿using OrderExtractorSample;
+using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
 
-namespace OrderExtractorSample;
+namespace InvoiceExtractor;
 class Program
 {
     static void Main(string[] args)
