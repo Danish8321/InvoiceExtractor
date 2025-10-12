@@ -4,14 +4,34 @@ namespace OrderExtractorSample;
 
 public class MeeshoInvoiceExtractor
 {
+    // Common color names used in products
+    private static readonly HashSet<string> CommonColors = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            // Basic colors
+            "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "Pink", "Brown", "Black", "White",
+            "Grey", "Gray", "Beige", "Cream", "Ivory", "Navy", "Maroon", "Teal", "Cyan", "Magenta",
+            "Lavender", "Turquoise", "Tan", "Olive", "Peach", "Mint", "Coral", "Salmon", "Gold",
+            "Silver", "Bronze", "Copper", "Platinum", "Rose", "Burgundy", "Indigo", "Violet",
+            "Mustard", "Khaki", "Rust", "Plum", "Mauve", "Crimson", "Scarlet", "Azure",
+            
+            // Multi-word colors and variations
+            "Light Blue", "Dark Blue", "Sky Blue", "Royal Blue", "Baby Blue", "Powder Blue",
+            "Light Green", "Dark Green", "Lime Green", "Mint Green", "Sea Green", "Forest Green",
+            "Light Pink", "Hot Pink", "Baby Pink", "Rose Pink", "Dusty Pink",
+            "Light Yellow", "Lemon Yellow", "Golden Yellow",
+            "Light Grey", "Dark Grey", "Charcoal Grey", "Ash Grey",
+            "Off White", "Pure White", "Cream White",
+            "Wine Red", "Blood Red", "Cherry Red",
+            "Multicolor", "Multi Color", "Multicolour", "Multi Colour",
+            "Assorted", "Mixed", "Rainbow", "Combo"
+        };
+
     public static InvoiceData ExtractInvoiceData(string invoiceText)
     {
         var invoiceData = new InvoiceData();
 
         try
         {
-            //Console.WriteLine("Starting extraction...\n");
-
             // Extract from Product Details table
             ExtractProductDetailsTable(invoiceText, invoiceData);
 
@@ -27,6 +47,7 @@ public class MeeshoInvoiceExtractor
             // Extract Product Line Items from Description table
             ExtractProductLineItems(invoiceText, invoiceData);
 
+            // Extract Invoice Totals
             ExtractInvoiceTotals(invoiceText, invoiceData);
         }
         catch (Exception ex)
@@ -48,40 +69,67 @@ public class MeeshoInvoiceExtractor
         if (skuMatch.Success)
         {
             data.SKU = skuMatch.Groups[1].Value;
-            //Console.WriteLine($"✓ SKU: {data.SKU}");
         }
 
-        // Size - pattern like "Free Size" or similar followed by digit
-        var sizeMatch = Regex.Match(text, @"Order No\.\w{8}((?:\w+\s)*Size)(\d+)");
-        if (sizeMatch.Success)
-        {
-            data.Size = sizeMatch.Groups[1].Value.Trim();
-            data.Qty = int.Parse(sizeMatch.Groups[2].Value);
-            //Console.WriteLine($"✓ Size: {data.Size}");
-            //Console.WriteLine($"✓ Qty: {data.Qty}");
-        }
+        // Extract the section after SKU that contains Size, Qty, Color, Order No
+        // Pattern: SKU + Size + Qty(digit) + Color + OrderNo(long number with underscore)
+        var detailsPattern = @"Order No\.\w{8}((?:Free Size|One Size|Standard Size|XXL|XL|L|M|S|XS|XXS|\d+\s*(?:cm|CM|inch|Inch)))(\d+)(\w+?)(\d{15,}_\d+)";
+        var detailsMatch = Regex.Match(text, detailsPattern, RegexOptions.IgnoreCase);
 
-        // Color - word between Qty and Order number
-        var colorMatch = Regex.Match(text, @"(?:Free Size|Size)(\d+)(\w+)(\d{15,}_\d+)");
-        if (colorMatch.Success)
+        if (detailsMatch.Success)
         {
-            if (!int.TryParse(colorMatch.Groups[2].Value, out _)) // Make sure it's not a number
+            // Size
+            data.Size = detailsMatch.Groups[1].Value.Trim();
+
+            // Qty
+            data.Qty = int.Parse(detailsMatch.Groups[2].Value);
+
+            // Color - the word between Qty and Order Number
+            string potentialColor = detailsMatch.Groups[3].Value;
+
+            // Validate if it's a known color
+            if (CommonColors.Contains(potentialColor))
             {
-                data.Color = colorMatch.Groups[2].Value;
-                ///Console.WriteLine($"✓ Color: {data.Color}");
+                data.Color = potentialColor;
             }
-            data.OrderNo = colorMatch.Groups[3].Value;
-            //Console.WriteLine($"✓ Order No: {data.OrderNo}");
-        }
+            else
+            {
+                // If not in common colors, still use it (might be a brand-specific color)
+                data.Color = potentialColor;
+            }
 
-        // Fallback for Order No if not caught above
-        if (string.IsNullOrEmpty(data.OrderNo))
+            // Order No
+            data.OrderNo = detailsMatch.Groups[4].Value;
+        }
+        else
         {
+            // Fallback: try to extract individually
+            var sizeMatch = Regex.Match(text, @"Order No\.\w{8}(Free Size|One Size|XXL|XL|L|M|S)", RegexOptions.IgnoreCase);
+            if (sizeMatch.Success)
+            {
+                data.Size = sizeMatch.Groups[1].Value.Trim();
+            }
+
+            // Try to extract order number separately
             var orderMatch = Regex.Match(text, @"Order No\.[\w\s]+?(\d{15,}_\d+)");
             if (orderMatch.Success)
             {
                 data.OrderNo = orderMatch.Groups[1].Value;
-                //Console.WriteLine($"✓ Order No: {data.OrderNo}");
+
+                var colorPattern = @"(?:Free Size|Size|XL|L|M|S)\d+(\w+?)\d{15,}_";
+                var colorMatch = Regex.Match(text, colorPattern, RegexOptions.IgnoreCase);
+                if (colorMatch.Success)
+                {
+                    data.Color = colorMatch.Groups[1].Value;
+                }
+            }
+
+            // Extract qty
+            var qtyPattern = @"(?:Free Size|Size|XL|L|M|S)(\d+)";
+            var qtyMatch = Regex.Match(text, qtyPattern, RegexOptions.IgnoreCase);
+            if (qtyMatch.Success)
+            {
+                data.Qty = int.Parse(qtyMatch.Groups[1].Value);
             }
         }
     }
@@ -95,7 +143,6 @@ public class MeeshoInvoiceExtractor
         if (match.Success)
         {
             data.ShipTo = match.Groups[1].Value.Trim();
-            //Console.WriteLine($"✓ Ship To: {data.ShipTo.Substring(0, Math.Min(50, data.ShipTo.Length))}...");
         }
     }
 
@@ -106,26 +153,26 @@ public class MeeshoInvoiceExtractor
         if (sellerMatch.Success)
         {
             data.SellerName = sellerMatch.Groups[1].Value.Trim();
-            //Console.WriteLine($"✓ Seller Name: {data.SellerName}");
         }
 
         // Seller GSTIN: GSTIN - 10DQLPA9951C1Z5
-        var gstinMatch = Regex.Match(text, @"GSTIN\s*-\s*([A-Z0-9]+)");
+        var gstinMatch = Regex.Match(text, @"GSTIN\s*[:\-–]?\s*([A-Z0-9]{15})", RegexOptions.IgnoreCase);
         if (gstinMatch.Success)
         {
             data.SellerGSTIN = gstinMatch.Groups[1].Value.Trim();
-            //Console.WriteLine($"✓ Seller GSTIN: {data.SellerGSTIN}");
         }
     }
 
     private static void ExtractOrderInfo(string text, InvoiceData data)
     {
+        Console.WriteLine("\n=== ORDER DETAILS ===");
+
         // Purchase Order No.204827517525195264
         var poMatch = Regex.Match(text, @"Purchase Order No\.(\d+)");
         if (poMatch.Success)
         {
             data.PurchaseOrderNo = poMatch.Groups[1].Value.Trim();
-            //Console.WriteLine($"✓ Purchase Order No: {data.PurchaseOrderNo}");
+            Console.WriteLine($"Purchase Order No: {data.PurchaseOrderNo}");
         }
 
         // Invoice No.d2rnq26255 - exactly 10 characters (alphanumeric)
@@ -133,7 +180,7 @@ public class MeeshoInvoiceExtractor
         if (invoiceMatch.Success)
         {
             data.InvoiceNo = invoiceMatch.Groups[1].Value.Trim();
-            //Console.WriteLine($"✓ Invoice No: {data.InvoiceNo}");
+            Console.WriteLine($"Invoice No: {data.InvoiceNo}");
         }
 
         // Order Date01.10.2025
@@ -141,7 +188,7 @@ public class MeeshoInvoiceExtractor
         if (orderDateMatch.Success)
         {
             data.OrderDate = orderDateMatch.Groups[1].Value.Trim();
-            //Console.WriteLine($"✓ Order Date: {data.OrderDate}");
+            Console.WriteLine($"Order Date: {data.OrderDate}");
         }
 
         // Invoice Date01.10.2025
@@ -149,17 +196,17 @@ public class MeeshoInvoiceExtractor
         if (invoiceDateMatch.Success)
         {
             data.InvoiceDate = invoiceDateMatch.Groups[1].Value.Trim();
-            //Console.WriteLine($"✓ Invoice Date: {data.InvoiceDate}");
+            Console.WriteLine($"Invoice Date: {data.InvoiceDate}");
         }
     }
 
     private static void ExtractProductLineItems(string text, InvoiceData data)
     {
-        Console.WriteLine("\nExtracting product line items...");
+        Console.WriteLine("\n=== PRODUCT ITEMS ===");
 
-        // Pattern: Description...Total then product lines until "Total"
-        // Find section between table header and final Total
-        var tableSectionMatch = Regex.Match(text, @"DescriptionHSNQtyGross AmountDiscountTaxable ValueTaxesTotal(.+?)Total", RegexOptions.Singleline);
+        // Pattern: Find section between table header and final Total line
+        // Use a more specific pattern to avoid stopping at column header
+        var tableSectionMatch = Regex.Match(text, @"DescriptionHSNQtyGross AmountDiscountTaxable ValueTaxesTotal(.+?)(?=TotalRs\.)", RegexOptions.Singleline);
 
         if (!tableSectionMatch.Success)
         {
@@ -170,13 +217,13 @@ public class MeeshoInvoiceExtractor
         string tableContent = tableSectionMatch.Groups[1].Value;
 
         // Pattern for each product line - handles both IGST and CGST+SGST
-        // Product Name HSN Qty Rs.Gross Rs.Discount Rs.Taxable TAX Rs.Tax Rs.Total
-        var productPattern = @"([^0-9]+?)(\d{6})(\d+|NA)Rs\.([\d.]+)Rs\.([\d.]+)Rs\.([\d.]+)((?:(?:IGST|CGST|SGST)\s*@[\d.]+%\s*:?\s*Rs\.[\d.]+\s*)+)Rs\.([\d.]+)";
+        var productPattern = @"(.+?)(?=\d{6})(\d{6})(\d+|NA)Rs\.([\d.]+)Rs\.([\d.]+)Rs\.([\d.]+)((?:(?:IGST|CGST|SGST)\s*@[\d.]+%\s*:?\s*Rs\.[\d.]+\s*)+)Rs\.([\d.]+)";
 
         var matches = Regex.Matches(tableContent, productPattern);
 
-        Console.WriteLine($"Found {matches.Count} product line items");
+        Console.WriteLine($"Found {matches.Count} product(s)\n");
 
+        int productNum = 1;
         foreach (Match match in matches)
         {
             if (match.Success)
@@ -190,25 +237,21 @@ public class MeeshoInvoiceExtractor
                 string taxSection = match.Groups[7].Value; // Contains all tax info
                 string total = match.Groups[8].Value;
 
-                // Parse tax section to extract tax type and amount
-                string taxType = "";
-                decimal taxAmount = 0;
-
-                // Extract all tax components
-                var taxMatches = Regex.Matches(taxSection, @"(IGST|CGST|SGST)\s*@([\d.]+)%\s*:?\s*Rs\.([\d.]+)");
-
-                var taxComponents = new List<string>();
-                foreach (Match taxMatch in taxMatches)
-                {
-                    string taxName = taxMatch.Groups[1].Value;
-                    string taxRate = taxMatch.Groups[2].Value;
-                    decimal taxVal = decimal.Parse(taxMatch.Groups[3].Value);
-
-                    taxComponents.Add($"{taxName} @{taxRate}%");
-                    taxAmount += taxVal;
-                }
-
-                taxType = string.Join(" + ", taxComponents);
+                //// Parse tax section to extract tax type and amount
+                //string taxType = "";
+                //decimal taxAmount = 0;
+                //// Extract all tax components
+                //var taxMatches = Regex.Matches(taxSection, @"(IGST|CGST|SGST)\s*@([\d.]+)%\s*:?\s*Rs\.([\d.]+)");
+                //var taxComponents = new List<string>();
+                //foreach (Match taxMatch in taxMatches)
+                //{
+                //    string taxName = taxMatch.Groups[1].Value;
+                //    string taxRate = taxMatch.Groups[2].Value;
+                //    decimal taxVal = decimal.Parse(taxMatch.Groups[3].Value);
+                //    taxComponents.Add($"{taxName} @{taxRate}%");
+                //    taxAmount += taxVal;
+                //}
+                //taxType = string.Join(" + ", taxComponents);
 
                 var product = new ProductDetail
                 {
@@ -218,20 +261,20 @@ public class MeeshoInvoiceExtractor
                     GrossAmount = gross,
                     Discount = discount,
                     TaxableValue = taxable,
-                    //TaxType = taxType,
                     Taxes = taxSection,
                     Total = total
                 };
 
                 data.Products.Add(product);
+                Console.WriteLine($"Product {productNum}: {product.Description}");
+                Console.WriteLine($"  HSN: {product.HSN} | Qty: {product.Qty} | Total: Rs.{product.Total}");
+                productNum++;
             }
         }
     }
 
     private static void ExtractInvoiceTotals(string text, InvoiceData data)
     {
-        Console.WriteLine("\nExtracting invoice totals...");
-
         // Pattern: TotalRs.17.85Rs.613.00
         // The first Rs. amount is total tax, second is grand total
         var totalMatch = Regex.Match(text, @"TotalRs\.([\d.]+)Rs\.([\d.]+)");
@@ -240,19 +283,12 @@ public class MeeshoInvoiceExtractor
         {
             data.TotalTax = decimal.Parse(totalMatch.Groups[1].Value);
             data.GrandTotal = decimal.Parse(totalMatch.Groups[2].Value);
-            //Console.WriteLine($"✓ Total Tax: Rs.{data.TotalTax}");
-            //Console.WriteLine($"✓ Grand Total: Rs.{data.GrandTotal}");
-        }
-        else
-        {
-            Console.WriteLine("Could not extract invoice totals");
         }
     }
 
     public static void DisplayInvoiceData(InvoiceData data)
     {
-        Console.WriteLine();
-        Console.WriteLine("╔════════════════════════════════════════════════════════════════════════╗");
+        Console.WriteLine("\n╔════════════════════════════════════════════════════════════════════════╗");
         Console.WriteLine("║                          INVOICE HEADER                                ║");
         Console.WriteLine("╚════════════════════════════════════════════════════════════════════════╝");
         Console.WriteLine($"{"SKU:",-25} {data.SKU}");
@@ -260,7 +296,7 @@ public class MeeshoInvoiceExtractor
         Console.WriteLine($"{"Qty:",-25} {data.Qty}");
         Console.WriteLine($"{"Color:",-25} {data.Color}");
         Console.WriteLine($"{"Order No:",-25} {data.OrderNo}");
-        Console.WriteLine($"{"Ship To:",-25} {(data.ShipTo?.Length > 50 ? string.Concat(data.ShipTo.AsSpan(0, 47), "...") : data.ShipTo)}");
+        Console.WriteLine($"{"Ship To:",-25} {(data.ShipTo?.Length > 50 ? data.ShipTo.Substring(0, 47) + "..." : data.ShipTo)}");
         Console.WriteLine($"{"Seller Name:",-25} {data.SellerName}");
         Console.WriteLine($"{"Seller GSTIN:",-25} {data.SellerGSTIN}");
         Console.WriteLine($"{"Purchase Order No:",-25} {data.PurchaseOrderNo}");
@@ -268,8 +304,7 @@ public class MeeshoInvoiceExtractor
         Console.WriteLine($"{"Order Date:",-25} {data.OrderDate}");
         Console.WriteLine($"{"Invoice Date:",-25} {data.InvoiceDate}");
 
-        Console.WriteLine();
-        Console.WriteLine("╔════════════════════════════════════════════════════════════════════════╗");
+        Console.WriteLine("\n╔════════════════════════════════════════════════════════════════════════╗");
         Console.WriteLine("║                         PRODUCT DETAILS                                ║");
         Console.WriteLine("╚════════════════════════════════════════════════════════════════════════╝");
 
@@ -283,13 +318,13 @@ public class MeeshoInvoiceExtractor
             Console.WriteLine($"{"Gross Amount:",-25} Rs.{product.GrossAmount:N2}");
             Console.WriteLine($"{"Discount:",-25} Rs.{product.Discount:N2}");
             Console.WriteLine($"{"Taxable Value:",-25} Rs.{product.TaxableValue:N2}");
-            Console.WriteLine($"{"Taxes:",-25} {product.Taxes}");
+            Console.WriteLine($"{"Tax:",-25} {product.Taxes}");
             Console.WriteLine($"{"Total:",-25} Rs.{product.Total:N2}");
             Console.WriteLine("─────────────────────────────────────────────────────────────────────────");
             productNum++;
         }
 
-        Console.WriteLine("╔════════════════════════════════════════════════════════════════════════╗");
+        Console.WriteLine("\n╔════════════════════════════════════════════════════════════════════════╗");
         Console.WriteLine("║                         INVOICE TOTALS                                 ║");
         Console.WriteLine("╚════════════════════════════════════════════════════════════════════════╝");
         Console.WriteLine($"{"Total Tax:",-25} Rs.{data.TotalTax:N2}");

@@ -1,10 +1,6 @@
 ﻿using OrderExtractorSample;
-using System.Diagnostics;
-using System.IO;
-using System.Security;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace InvoiceExtractor;
 
@@ -12,7 +8,7 @@ class Program
 {
     static void Main(string[] args)
     {
-        string pdfPath = "C:\\Users\\MOGAMBO\\Downloads\\Tahaniya_Orders\\Meesho_2.pdf";
+        string pdfPath = "C:\\Users\\MOGAMBO\\Downloads\\Tahaniya_Orders\\Meesho_3.pdf";
         using PdfDocument document = PdfDocument.Open(pdfPath);
         foreach (Page page in document.GetPages())
         {
