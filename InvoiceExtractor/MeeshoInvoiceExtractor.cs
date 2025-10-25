@@ -1,6 +1,7 @@
-﻿using System.Text.RegularExpressions;
+﻿using OrderExtractorSample;
+using System.Text.RegularExpressions;
 
-namespace OrderExtractorSample;
+namespace InvoiceExtractor;
 
 public class MeeshoInvoiceExtractor
 {
